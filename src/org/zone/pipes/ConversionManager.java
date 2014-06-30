@@ -1,7 +1,9 @@
 package org.zone.pipes;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -18,6 +20,7 @@ public class ConversionManager implements PipesRegistrant{
 	
 	private PipesPlugin plugin;
 	private List<PipesRegistrant> registrations = new LinkedList<PipesRegistrant>();
+	@SuppressWarnings("rawtypes")
 	private Map<Class<?>, List<Converter>> converters = null;
 	
 	public ConversionManager(PipesPlugin plugin){
@@ -78,61 +81,133 @@ public class ConversionManager implements PipesRegistrant{
 			}
 			//Create superclass converters
 			for(Map.Entry<Class<?>, List<Converter>> entry:new LinkedList<Map.Entry<Class<?>, List<Converter>>>(converters.entrySet())){
-				for(Class<?> superClass:Util.getInheritance(entry.getKey())){
-					Converter<?,?> c = new SuperclassConverter(entry.getKey(), superClass);
-					if(converters.get(superClass) == null){
-						converters.put(superClass, new LinkedList<Converter>());
+				if(!entry.getKey().isArray()){
+					for(Class<?> superClass:Util.getInheritance(entry.getKey())){
+						Converter<?,?> c = new SuperclassConverter(entry.getKey(), superClass);
+						if(converters.get(superClass) == null){
+							converters.put(superClass, new LinkedList<Converter>());
+						}
+						List<Converter> classConverters = converters.get(superClass);
+						classConverters.add(c);
 					}
-					List<Converter> classConverters = converters.get(superClass);
-					classConverters.add(c);
 				}
 			}
 			return converters;
 		}
 	}
 	
-	@SuppressWarnings("unchecked")
 	public static void main(String[] args) throws ConversionException{
 		ConversionManager c = new ConversionManager(null);
-		System.out.println(c.convert("eh", Number.class));
+		System.out.println(c.convert("1 2 3", Integer.class, true));
 	}
 	
-	public <T> T convert(Object o, final Class<T> target) throws ConversionException{
+	public <T> T convert(Object o, Class<T> target) throws ConversionException{
+		return this.convert(o, target, false).get(0);
+	}
+	
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public <T> List<T> convert(Object o, final Class<T> target, boolean multiple) throws ConversionException{
 		Queue<ConversionStep> steps = new LinkedList<ConversionStep>();
 		steps.add(new ConversionStep(null, null){
 			public Class getFrom(){
 				return target;
 			}
 		});
+		if(multiple){
+			steps.add(new ConversionStep(null, null){
+				public Class getFrom(){
+					return Array.newInstance(target, 0).getClass();
+				}
+			});
+		}
+		System.out.println(steps.peek().getFrom());
 		ConversionException latest = null;
 		while(steps.size() > 0){
 			ConversionStep step = steps.poll();
 			if(step.getFrom().isAssignableFrom(o.getClass())){
 				try{
-					return (T) step.convert(o);
+					Object out = step.convert(o);
+					List<T> output = new ArrayList<T>();
+					if(out.getClass().isArray()){
+						for(Object item:(Object[])out){
+							output.add((T) item);
+						}
+					}else{
+						output.add((T) out);
+					}
+					return output;
 				}catch(ConversionException ce){
 					latest = ce;
 				}
 			}else{
+				if(step.getFrom().isArray()){
+					List<Converter> converters = this.getConverters().get(step.getFrom().getComponentType());
+					if(converters != null){
+						for(Converter c:converters){
+							if(!step.checkDuplicates(c.getFrom()) && !c.getTo().isArray()){
+								steps.add(new ArrayConversionStep(c, step));
+							}
+						}
+					}
+				}
 				List<Converter> converters = this.getConverters().get(step.getFrom());
-				if(converters == null)
-					continue;
-				for(Converter c:converters){
-					if(!step.checkDuplicates(c.getFrom())){
-						steps.add(new ConversionStep(c, step));
+				if(converters != null){
+					for(Converter c:converters){
+						if(!step.checkDuplicates(c.getFrom())){
+							steps.add(new ConversionStep(c, step));
+						}
 					}
 				}
 			}
 		}
-		throw latest;
+		if(latest != null){
+			throw latest;
+		}else{
+			throw new ConversionException("No conversion found for argument");
+		}
+		
+	}
+	
+	@SuppressWarnings("rawtypes")
+	private class ArrayConversionStep extends ConversionStep{
+		
+		public ArrayConversionStep(Converter c, ConversionStep next){
+			super(c, next);
+		}
+		
+		@SuppressWarnings("unchecked")
+		@Override
+		public Object convert(Object o) throws ConversionException{
+			Object[] oa = (Object[]) o;
+			Object[] output = new Object[oa.length];
+			for(int i = 0;i<oa.length;i++){
+				try{
+					output[i] = c.convert(oa[i]);
+				}catch(ConversionException e){
+					throw e;
+				}catch(Exception e){
+					throw new ConversionException(e);
+				}
+			}
+			return next.convert(output);
+		}
+		
+		public boolean checkDuplicates(Class<?> clazz){
+			if(c==null)
+				return false;
+			return clazz.isAssignableFrom(c.getTo()) || next.checkDuplicates(clazz);
+		}
+		
+		public Class getFrom(){
+			return Array.newInstance(c.getFrom(), 0).getClass();
+		}
 	}
 	
 	@SuppressWarnings("rawtypes")
 	private class ConversionStep{
 		
-		
-		private Converter c;
-		private ConversionStep next;
+		protected Converter c;
+		protected ConversionStep next;
 		
 		public ConversionStep(Converter c, ConversionStep next){
 			this.c = c;
@@ -156,7 +231,7 @@ public class ConversionManager implements PipesRegistrant{
 			}
 		}
 		
-		public boolean checkDuplicates(Class clazz){
+		public boolean checkDuplicates(Class<?> clazz){
 			if(c==null)
 				return false;
 			return clazz.isAssignableFrom(c.getTo()) || next.checkDuplicates(clazz);
@@ -193,6 +268,20 @@ public class ConversionManager implements PipesRegistrant{
 		}catch(NumberFormatException e){
 			throw new ConversionException('"'+s + "\" is not a number");
 		}
+	}
+	
+	@ConvertMethod
+	public Long parseLong(String s) throws ConversionException{
+		try{
+			return Long.parseLong(s);
+		}catch(NumberFormatException e){
+			throw new ConversionException('"'+s + "\" is not a number");
+		}
+	}
+	
+	@ConvertMethod
+	public String[] split(String s){
+		return s.split(" ");
 	}
 	
 }
