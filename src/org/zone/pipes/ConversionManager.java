@@ -1,7 +1,8 @@
 package org.zone.pipes;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ public class ConversionManager implements PipesRegistrant{
 		if(converters != null){
 			return converters;
 		}else{
-			converters = new HashMap<Class<?>, List<Converter>>();
+			converters = new LinkedHashMap<Class<?>, List<Converter>>();
 			// Find converters in Registrants
 			for(final PipesRegistrant r:registrations){
 				for(final Method m:r.getClass().getMethods()){
@@ -47,11 +48,18 @@ public class ConversionManager implements PipesRegistrant{
 
 							@Override
 							public Object convert(Object from) throws ConversionException {
-								try {
-									return m.invoke(r, from);
-								} catch (Exception e) {
-									throw new ConversionException("Error invoking conversion method", e);
-								}
+									try {
+										return m.invoke(r, from);
+									} catch (InvocationTargetException e) {
+										if(e.getCause() instanceof ConversionException){
+											throw (ConversionException) e.getCause();
+										}else{
+											throw new ConversionException("Unknown error during conversion", e.getCause());
+										}
+									} catch (Exception e) {
+										throw new ConversionException("Unknown error during conversion", e.getCause());
+									}
+								
 							}
 
 							@Override
@@ -83,20 +91,10 @@ public class ConversionManager implements PipesRegistrant{
 		}
 	}
 	
-	@ConvertMethod
-	public Integer parseInt(String s){
-		return Integer.parseInt(s);
-	}
-	
-	@ConvertMethod
-	public Float parseFloat(String s){
-		return Float.parseFloat(s);
-	}
-	
 	@SuppressWarnings("unchecked")
 	public static void main(String[] args) throws ConversionException{
 		ConversionManager c = new ConversionManager(null);
-		System.out.println(c.convert("he", Number.class));
+		System.out.println(c.convert("eh", Number.class));
 	}
 	
 	public <T> T convert(Object o, final Class<T> target) throws ConversionException{
@@ -110,7 +108,6 @@ public class ConversionManager implements PipesRegistrant{
 		while(steps.size() > 0){
 			ConversionStep step = steps.poll();
 			if(step.getFrom().isAssignableFrom(o.getClass())){
-				System.out.println(step.getFrom());
 				try{
 					return (T) step.convert(o);
 				}catch(ConversionException ce){
@@ -169,4 +166,33 @@ public class ConversionManager implements PipesRegistrant{
 			return c.getFrom();
 		}
 	}
+	
+	@ConvertMethod
+	public Double parseDouble(String s) throws ConversionException{
+		try{
+			return Double.parseDouble(s);
+		}catch(NumberFormatException e){
+			throw new ConversionException('"'+s + "\" is not a number");
+		}
+			
+	}
+	
+	@ConvertMethod
+	public Float parseFloat(String s) throws ConversionException{
+		try{
+			return Float.parseFloat(s);
+		}catch(NumberFormatException e){
+			throw new ConversionException('"'+s + "\" is not a number");
+		}
+	}
+	
+	@ConvertMethod
+	public Integer parseInt(String s) throws ConversionException{
+		try{
+			return Integer.parseInt(s);
+		}catch(NumberFormatException e){
+			throw new ConversionException('"'+s + "\" is not a number");
+		}
+	}
+	
 }
