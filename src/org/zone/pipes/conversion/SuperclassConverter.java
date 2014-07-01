@@ -32,4 +32,9 @@ public class SuperclassConverter<From, To> implements Converter<Object, To> {
 		return (Class<Object>) this.from;
 	}
 
+	@Override
+	public boolean isStep() {
+		return false;
+	}
+
 }

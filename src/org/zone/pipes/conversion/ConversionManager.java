@@ -4,11 +4,11 @@ import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.Plugin;
@@ -83,6 +83,11 @@ public class ConversionManager{
 							public Class<?> getFrom() {
 								return m.getParameterTypes()[0];
 							}
+
+							@Override
+							public boolean isStep() {
+								return true;
+							}
 							
 						});
 					}
@@ -116,7 +121,7 @@ public class ConversionManager{
 	
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public <T> List<T> convert(Object o, final Class<T> target, CommandSender context, boolean multiple) throws ConversionException{
-		Queue<ConversionStep> steps = new LinkedList<ConversionStep>();
+		Deque<ConversionStep> steps = new LinkedList<ConversionStep>();
 		steps.add(new ConversionStep(null, null){
 			public Class getFrom(){
 				return target;
@@ -154,18 +159,24 @@ public class ConversionManager{
 					if(converters != null){
 						for(Converter c:converters){
 							if(!step.checkDuplicates(c.getFrom()) && !c.getTo().isArray()){
-								steps.add(new ArrayConversionStep(c, step));
+								if(c.isStep())
+									steps.add(new ArrayConversionStep(c, step));
+								else
+									steps.addFirst(new ArrayConversionStep(c, step));
 							}
 						}
 					}
 				}else{
-					steps.add(new ArrayFirstChoiceStep(step));
+					steps.addFirst(new ArrayFirstChoiceStep(step));
 				}
 				List<Converter> converters = this.getConverters().get(step.getFrom());
 				if(converters != null){
 					for(Converter c:converters){
 						if(!step.checkDuplicates(c.getFrom())){
-							steps.add(new ConversionStep(c, step));
+							if(c.isStep())
+								steps.add(new ConversionStep(c, step));
+							else
+								steps.addFirst(new ConversionStep(c, step));
 						}
 					}
 				}

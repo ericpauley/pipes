@@ -7,4 +7,5 @@ public interface Converter<From, To> {
 	public To convert(From from, CommandSender context) throws ConversionException;
 	public Class<To> getTo();
 	public Class<From> getFrom();
+	public boolean isStep();
 }
