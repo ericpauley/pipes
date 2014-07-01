@@ -1,4 +1,6 @@
-package org.zone.pipes.converters;
+package org.zone.pipes.conversion;
+
+import org.bukkit.command.CommandSender;
 
 public abstract class Parser<To> implements Converter<String, To> {
 
@@ -9,7 +11,7 @@ public abstract class Parser<To> implements Converter<String, To> {
 	}
 	
 	@Override
-	public abstract To convert(String from);
+	public abstract To convert(String from, CommandSender context);
 
 	@Override
 	public Class<To> getTo() {

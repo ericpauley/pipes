@@ -1,4 +1,6 @@
-package org.zone.pipes.converters;
+package org.zone.pipes.conversion;
+
+import org.bukkit.command.CommandSender;
 
 public class SuperclassConverter<From, To> implements Converter<Object, To> {
 
@@ -15,7 +17,7 @@ public class SuperclassConverter<From, To> implements Converter<Object, To> {
 	
 	@SuppressWarnings("unchecked")
 	@Override
-	public To convert(Object from) {
+	public To convert(Object from, CommandSender context) {
 		return (To) from;
 	}
 

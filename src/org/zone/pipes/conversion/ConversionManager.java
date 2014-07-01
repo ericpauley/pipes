@@ -1,4 +1,4 @@
-package org.zone.pipes;
+package org.zone.pipes.conversion;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
@@ -10,25 +10,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 
+import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.Plugin;
+import org.zone.pipes.PipesPlugin;
+import org.zone.pipes.Util;
 import org.zone.pipes.annotations.ConvertMethod;
-import org.zone.pipes.converters.Converter;
-import org.zone.pipes.converters.SuperclassConverter;
 import org.zone.pipes.errors.ConversionException;
 
-public class ConversionManager implements PipesRegistrant{
+public class ConversionManager{
 	
 	private PipesPlugin plugin;
-	private List<PipesRegistrant> registrations = new LinkedList<PipesRegistrant>();
+	private List<ConversionRegistrant> registrations = new LinkedList<ConversionRegistrant>();
 	@SuppressWarnings("rawtypes")
 	private Map<Class<?>, List<Converter>> converters = null;
 	
 	public ConversionManager(PipesPlugin plugin){
 		this.plugin = plugin;
-		register(this, plugin);
+		register(new DefaultConversionRegistrant(this.plugin), plugin);
 	}
 	
-	public void register(PipesRegistrant registrant, Plugin owner){
+	public void register(ConversionRegistrant registrant, Plugin owner){
 		registrations.add(registrant);
 		converters = null;
 	}
@@ -40,9 +41,10 @@ public class ConversionManager implements PipesRegistrant{
 		}else{
 			converters = new LinkedHashMap<Class<?>, List<Converter>>();
 			// Find converters in Registrants
-			for(final PipesRegistrant r:registrations){
+			for(final ConversionRegistrant r:registrations){
 				for(final Method m:r.getClass().getMethods()){
-					if(m.isAnnotationPresent(ConvertMethod.class) && m.getParameterTypes().length == 1){
+					if(m.isAnnotationPresent(ConvertMethod.class) && (
+							m.getParameterTypes().length == 1 || m.getParameterTypes().length == 2)){
 						if(converters.get(m.getReturnType()) == null){
 							converters.put(m.getReturnType(), new LinkedList<Converter>());
 						}
@@ -50,15 +52,22 @@ public class ConversionManager implements PipesRegistrant{
 						classConverters.add(new Converter(){
 
 							@Override
-							public Object convert(Object from) throws ConversionException {
+							public Object convert(Object from, CommandSender context) throws ConversionException {
 									try {
-										return m.invoke(r, from);
+										if(m.getParameterTypes().length == 1)
+											return m.invoke(r, from);
+										else if(m.getParameterTypes()[1].isInstance(context))
+											return m.invoke(r, from, context);
+										else
+											throw new ConversionException("Invalid converter for this context");
 									} catch (InvocationTargetException e) {
 										if(e.getCause() instanceof ConversionException){
 											throw (ConversionException) e.getCause();
 										}else{
 											throw new ConversionException("Unknown error during conversion", e.getCause());
 										}
+									} catch (ConversionException e){
+										throw e;
 									} catch (Exception e) {
 										throw new ConversionException("Unknown error during conversion", e.getCause());
 									}
@@ -98,15 +107,15 @@ public class ConversionManager implements PipesRegistrant{
 	
 	public static void main(String[] args) throws ConversionException{
 		ConversionManager c = new ConversionManager(null);
-		System.out.println(c.convert("1 2 3", Integer.class, true));
+		System.out.println(c.convert("1 2", Integer.class, null, false));
 	}
 	
-	public <T> T convert(Object o, Class<T> target) throws ConversionException{
-		return this.convert(o, target, false).get(0);
+	public <T> T convert(Object o, Class<T> target, CommandSender context) throws ConversionException{
+		return this.convert(o, target, context, false).get(0);
 	}
 	
 	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public <T> List<T> convert(Object o, final Class<T> target, boolean multiple) throws ConversionException{
+	public <T> List<T> convert(Object o, final Class<T> target, CommandSender context, boolean multiple) throws ConversionException{
 		Queue<ConversionStep> steps = new LinkedList<ConversionStep>();
 		steps.add(new ConversionStep(null, null){
 			public Class getFrom(){
@@ -126,7 +135,7 @@ public class ConversionManager implements PipesRegistrant{
 			ConversionStep step = steps.poll();
 			if(step.getFrom().isAssignableFrom(o.getClass())){
 				try{
-					Object out = step.convert(o);
+					Object out = step.convert(o, context);
 					List<T> output = new ArrayList<T>();
 					if(out.getClass().isArray()){
 						for(Object item:(Object[])out){
@@ -149,6 +158,8 @@ public class ConversionManager implements PipesRegistrant{
 							}
 						}
 					}
+				}else{
+					steps.add(new ArrayFirstChoiceStep(step));
 				}
 				List<Converter> converters = this.getConverters().get(step.getFrom());
 				if(converters != null){
@@ -168,6 +179,32 @@ public class ConversionManager implements PipesRegistrant{
 		
 	}
 	
+	private class ArrayFirstChoiceStep extends ConversionStep{
+		
+		public ArrayFirstChoiceStep(ConversionStep next){
+			super(null, next);
+		}
+		
+		@Override
+		public Object convert(Object o, CommandSender context) throws ConversionException{
+			Object[] oa = (Object[]) o;
+			if(oa.length > 0){
+				return next.convert(oa[0], context);
+			}else{
+				throw new ConversionException("No " + oa.getClass().getComponentType().getSimpleName() + "s found.");
+			}
+		}
+		
+		public boolean checkDuplicates(Class<?> clazz){
+			return next.checkDuplicates(clazz);
+		}
+		
+		@SuppressWarnings("rawtypes")
+		public Class getFrom(){
+			return Array.newInstance(next.getFrom(), 0).getClass();
+		}
+	}
+	
 	@SuppressWarnings("rawtypes")
 	private class ArrayConversionStep extends ConversionStep{
 		
@@ -177,19 +214,19 @@ public class ConversionManager implements PipesRegistrant{
 		
 		@SuppressWarnings("unchecked")
 		@Override
-		public Object convert(Object o) throws ConversionException{
+		public Object convert(Object o, CommandSender context) throws ConversionException{
 			Object[] oa = (Object[]) o;
 			Object[] output = new Object[oa.length];
 			for(int i = 0;i<oa.length;i++){
 				try{
-					output[i] = c.convert(oa[i]);
+					output[i] = c.convert(oa[i], context);
 				}catch(ConversionException e){
 					throw e;
 				}catch(Exception e){
 					throw new ConversionException(e);
 				}
 			}
-			return next.convert(output);
+			return next.convert(output, context);
 		}
 		
 		public boolean checkDuplicates(Class<?> clazz){
@@ -215,19 +252,19 @@ public class ConversionManager implements PipesRegistrant{
 		}
 		
 		@SuppressWarnings("unchecked")
-		public Object convert(Object o) throws ConversionException{
+		public Object convert(Object o, CommandSender context) throws ConversionException{
 			if(c==null){
 				return o;
 			}else{
 				Object converted;
 				try{
-					converted = c.convert(o);
+					converted = c.convert(o, context);
 				}catch(ConversionException e){
 					throw e;
 				}catch(Exception e){
 					throw new ConversionException(e);
 				}
-				return next.convert(converted);
+				return next.convert(converted, context);
 			}
 		}
 		
@@ -240,48 +277,6 @@ public class ConversionManager implements PipesRegistrant{
 		public Class getFrom(){
 			return c.getFrom();
 		}
-	}
-	
-	@ConvertMethod
-	public Double parseDouble(String s) throws ConversionException{
-		try{
-			return Double.parseDouble(s);
-		}catch(NumberFormatException e){
-			throw new ConversionException('"'+s + "\" is not a number");
-		}
-			
-	}
-	
-	@ConvertMethod
-	public Float parseFloat(String s) throws ConversionException{
-		try{
-			return Float.parseFloat(s);
-		}catch(NumberFormatException e){
-			throw new ConversionException('"'+s + "\" is not a number");
-		}
-	}
-	
-	@ConvertMethod
-	public Integer parseInt(String s) throws ConversionException{
-		try{
-			return Integer.parseInt(s);
-		}catch(NumberFormatException e){
-			throw new ConversionException('"'+s + "\" is not a number");
-		}
-	}
-	
-	@ConvertMethod
-	public Long parseLong(String s) throws ConversionException{
-		try{
-			return Long.parseLong(s);
-		}catch(NumberFormatException e){
-			throw new ConversionException('"'+s + "\" is not a number");
-		}
-	}
-	
-	@ConvertMethod
-	public String[] split(String s){
-		return s.split(" ");
 	}
 	
 }
