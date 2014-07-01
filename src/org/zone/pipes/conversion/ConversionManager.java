@@ -112,7 +112,7 @@ public class ConversionManager{
 	
 	public static void main(String[] args) throws ConversionException{
 		ConversionManager c = new ConversionManager(null);
-		System.out.println(c.convert("1 2", Integer.class, null, false));
+		System.out.println(c.convert("1 2", Integer.class, null, true));
 	}
 	
 	public <T> T convert(Object o, Class<T> target, CommandSender context) throws ConversionException{
@@ -122,11 +122,6 @@ public class ConversionManager{
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public <T> List<T> convert(Object o, final Class<T> target, CommandSender context, boolean multiple) throws ConversionException{
 		Deque<ConversionStep> steps = new LinkedList<ConversionStep>();
-		steps.add(new ConversionStep(null, null){
-			public Class getFrom(){
-				return target;
-			}
-		});
 		if(multiple){
 			steps.add(new ConversionStep(null, null){
 				public Class getFrom(){
@@ -134,6 +129,11 @@ public class ConversionManager{
 				}
 			});
 		}
+		steps.add(new ConversionStep(null, null){
+			public Class getFrom(){
+				return target;
+			}
+		});
 		System.out.println(steps.peek().getFrom());
 		ConversionException latest = null;
 		while(steps.size() > 0){
@@ -167,7 +167,7 @@ public class ConversionManager{
 						}
 					}
 				}else{
-					steps.addFirst(new ArrayFirstChoiceStep(step));
+					steps.add(new ArrayFirstChoiceStep(step));
 				}
 				List<Converter> converters = this.getConverters().get(step.getFrom());
 				if(converters != null){
